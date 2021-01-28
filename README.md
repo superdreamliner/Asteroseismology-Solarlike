@@ -6,7 +6,7 @@ There are several parts in the pipeline:
 
 - Light curve preparation: remove outliers & high-pass filter. 
 - Find the power excess by collapsed autocorrelation function. 
-- Derive global oscillation parameters and their uncertainties. A Bayesian fit to the power spectrum for $\nu_{max}$ and autocorrelation function for $\Delta \nu$. 
+- Derive global oscillation parameters and their uncertainties. 
 
 
 
@@ -49,7 +49,6 @@ There are several parts in the pipeline:
 python driver.py
 ```
 
- 
 
 More details will come soon. 
 
