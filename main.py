@@ -921,7 +921,7 @@ def get_dnu_ACF(frequency, psd, mumax, plot_flag=1, starid=None, dirname=None):
     
     deltamu_guess = (mumax/3050)**0.77 * 135.1
 
-    lagn, rhon = auto_correlate(frequency, psd, need_interpolate=True, samplinginterval=0.2)
+    lagn, rhon = auto_correlate(frequency, psd, need_interpolate=True, samplinginterval=None)
     rhon_smoothed = simple_smooth(rhon, window_len=15, window='hanning')
 
     idx1 = np.where((lagn>0.8*deltamu_guess) & (lagn<1.2*deltamu_guess))[0]
