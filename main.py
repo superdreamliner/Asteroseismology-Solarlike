@@ -555,7 +555,7 @@ def lnlike(parameters, frequency, power, nyquist, gran_num=2, type="withgaussian
     return like_function
 
 
-def guess_background_parameters(frequency, psd, psd_smooth, mumax_guess, starid = None, dirname = None):
+def guess_background_parameters(frequency, psd, psd_smooth, mumax_guess, starid=None, dirname=None):
     
     '''
     part-I guess the parameters for the background model.
@@ -592,8 +592,9 @@ def guess_background_parameters(frequency, psd, psd_smooth, mumax_guess, starid 
     c = 4.0 # the power degree
     parameters = np.array([w, a2, b2, a3, b3, h, mumax_guess, sig, c])
 
-    np.savetxt(dirname+starid+"parametersGuess.csv", parameters.reshape((1,9)), delimiter=",", fmt=("%10.4f","%10.4f","%10.4f","%10.4f",
-        "%10.4f","%10.4f","%10.4f","%10.4f","%10.4f"), header="w, a2, b2, a3, b3, h, mumax_guess, sig, c")
+    if starid is not None and dirname is not None:
+        np.savetxt(dirname+starid+"parametersGuess.csv", parameters.reshape((1,9)), delimiter=",", fmt=("%10.4f","%10.4f","%10.4f","%10.4f",
+            "%10.4f","%10.4f","%10.4f","%10.4f","%10.4f"), header="w, a2, b2, a3, b3, h, mumax_guess, sig, c")
 
     return parameters
 
@@ -616,8 +617,9 @@ def fitting_MLE(frequency, psd, psd_smooth, initial_paras, nyquist, gran_num=2, 
         result = op.minimize(nll, initial_paras, args=(frequency,psd,nyquist,gran_num,"withgaussian"), bounds=bnds)
         parameters_MLE = result["x"]
 
-        np.savetxt(dirname+starid+"parametersMLE.csv", parameters_MLE.reshape((1,9)), delimiter=",", fmt=("%10.4f","%10.4f","%10.4f","%10.4f",
-            "%10.4f","%10.4f","%10.4f","%10.4f","%10.4f"), header="w, a2, b2, a3, b3, h, mumax, sig, c")
+        if starid is not None and dirname is not None:
+            np.savetxt(dirname+starid+"parametersMLE.csv", parameters_MLE.reshape((1,9)), delimiter=",", fmt=("%10.4f","%10.4f","%10.4f","%10.4f",
+                "%10.4f","%10.4f","%10.4f","%10.4f","%10.4f"), header="w, a2, b2, a3, b3, h, mumax, sig, c")
 
     elif gran_num==1:
         # w, a2, b2, h, mumax, sig, c
@@ -627,8 +629,9 @@ def fitting_MLE(frequency, psd, psd_smooth, initial_paras, nyquist, gran_num=2, 
         result = op.minimize(nll, np.delete(initial_paras,[3,4]), args=(frequency,psd,nyquist,gran_num,"withgaussian"), bounds=bnds)
         parameters_MLE = result["x"]
 
-        np.savetxt(dirname+starid+"parametersMLE.csv", parameters_MLE.reshape((1,7)), delimiter=",", fmt=("%10.4f","%10.4f","%10.4f","%10.4f",
-            "%10.4f","%10.4f","%10.4f"), header="w, a2, b2, h, mumax, sig, c")
+        if starid is not None and dirname is not None:
+            np.savetxt(dirname+starid+"parametersMLE.csv", parameters_MLE.reshape((1,7)), delimiter=",", fmt=("%10.4f","%10.4f","%10.4f","%10.4f",
+                "%10.4f","%10.4f","%10.4f"), header="w, a2, b2, h, mumax, sig, c")
 
     return parameters_MLE
 
@@ -719,21 +722,21 @@ def fitting_MCMC(frequency, psd, psd_smooth, parameters_MLE, nyquist, bound=0.5,
     result_mcmc = np.array(list(map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
         zip(*np.percentile(samples, [16, 50, 84],axis=0)))))
     
-    np.savetxt(dirname+starid+"parametersMCMC.csv", result_mcmc.reshape((ndim,3)), delimiter=",", 
-        fmt=("%10.4f","%10.4f","%10.4f"), header="parameter_value, upper_error, lower_error")
+    if starid is not None and dirname is not None:
+        np.savetxt(dirname+starid+"parametersMCMC.csv", result_mcmc.reshape((ndim,3)), delimiter=",", 
+            fmt=("%10.4f","%10.4f","%10.4f"), header="parameter_value, upper_error, lower_error")
+        if gran_num==2:
+            para_label = ['w', 'a2', 'b2', 'a3', 'b3', 'h', 'mumax', 'sig', 'c']
+        elif gran_num==1:
+            para_label = ['w', 'a2', 'b2', 'h', 'mumax', 'sig', 'c']
+        fig = corner.corner(samples, labels=para_label, quantiles=(0.16, 0.5, 0.84), truths=result_mcmc[:,0])
+        fig.savefig(dirname+starid+'emcee_corner.png')
+        plt.close()
 
-    if gran_num==2:
-        para_label = ['w', 'a2', 'b2', 'a3', 'b3', 'h', 'mumax', 'sig', 'c']
-    elif gran_num==1:
-        para_label = ['w', 'a2', 'b2', 'h', 'mumax', 'sig', 'c']
-    fig = corner.corner(samples, labels=para_label, quantiles=(0.16, 0.5, 0.84), truths=result_mcmc[:,0])
-    fig.savefig(dirname+starid+'emcee_corner.png')
-    plt.close()
-
-    return result_mcmc[:,0]
+    return result_mcmc
 
 
-def plot_with_fit(frequency, psd, psd_smooth=None, parameters=None, nyquist=None, gran_num=2, type='withgaussian', starid=None, dirname = None):
+def plot_with_fit(frequency, psd, psd_smooth=None, parameters=None, nyquist=None, gran_num=2, type='withgaussian', starid=None, dirname=None):
 
     '''
     Plot the psd including smoothed psd and fitting result.
@@ -923,25 +926,25 @@ def get_dnu_ACF(frequency, psd, mumax, plot_flag=1, starid=None, dirname=None):
 
     lagn, rhon = auto_correlate(frequency, psd, need_interpolate=True, samplinginterval=None)
     rhon_smoothed = simple_smooth(rhon, window_len=15, window='hanning')
-
     idx1 = np.where((lagn>0.8*deltamu_guess) & (lagn<1.2*deltamu_guess))[0]
     lagn1, rhon1, rhon_smoothed1 = lagn[idx1], rhon[idx1], rhon_smoothed[idx1]
     idx2 = np.where(rhon_smoothed1 == np.max(rhon_smoothed1))
     value = lagn1[idx2][0]
-
-    if plot_flag == 1:
-        plt.figure(figsize=(8,6))
-        ax = plt.subplot(111)
-        ax.set_title(starid + r' $\Delta \nu$', fontsize=15)
-        ax.plot(lagn, rhon, color='gray', linewidth=1.0)
-        ax.plot(lagn, rhon_smoothed, color='red', linewidth=1.3)
-        ax.vlines(value, -1.0, 1.0)
-        ax.text(x=value*1.1, y=0.5, s= r'$\Delta \nu = $' + '%.2f' % value + ' μHz', fontsize=15)
-        ax.set_xlabel('Frequency (μHz)', fontsize=15)
-        ax.set_ylabel('ACF of Power Spectrum', fontsize=15)
-        ax.axis([np.min(lagn),np.max(lagn),np.min(rhon),0.6])
-        plt.savefig(dirname+starid+'_dnuACF.png')
-        plt.close()
+    
+    if starid is not None and dirname is not None:
+        if plot_flag == 1:
+            plt.figure(figsize=(8,6))
+            ax = plt.subplot(111)
+            ax.set_title(starid + r' $\Delta \nu$', fontsize=15)
+            ax.plot(lagn, rhon, color='gray', linewidth=1.0)
+            ax.plot(lagn, rhon_smoothed, color='red', linewidth=1.3)
+            ax.vlines(value, -1.0, 1.0)
+            ax.text(x=value*1.1, y=0.5, s= r'$\Delta \nu = $' + '%.2f' % value + ' μHz', fontsize=15)
+            ax.set_xlabel('Frequency (μHz)', fontsize=15)
+            ax.set_ylabel('ACF of Power Spectrum', fontsize=15)
+            ax.axis([np.min(lagn),np.max(lagn),np.min(rhon),0.6])
+            plt.savefig(dirname+starid+'_dnuACF.png')
+            plt.close()
 
     return value
 
@@ -1099,41 +1102,44 @@ def dnu(frequency, psd, mumax, parameters, nyquist, gran_num=2, echelle_plot=1, 
     bg, psd_bg_corrected = psd_bg(frequency, psd, parameters, nyquist, gran_num=gran_num)
     psd_bg_corrected_smooth = smooth_wrapper(frequency, psd_bg_corrected, window_width=1.0)
 
-    xx = frequency.reshape(len(frequency),1)
-    yy = psd_bg_corrected.reshape(len(psd_bg_corrected),1)
-    a = np.concatenate((xx,yy),axis=1)
-    np.savetxt(dirname+starid+'power_without_bg.dat', a, header = "frequency, psd_without_bg")
+    if starid is not None and dirname is not None:
+        xx = frequency.reshape(len(frequency),1)
+        yy = psd_bg_corrected.reshape(len(psd_bg_corrected),1)
+        a = np.concatenate((xx,yy),axis=1)
+        np.savetxt(dirname+starid+'power_without_bg.dat', a, header = "frequency, psd_without_bg")
 
     frequency2, psd2, psd_smooth2 = trim(frequency, mumax=mumax, psd=psd_bg_corrected, 
         psd_smooth=psd_bg_corrected_smooth, lowerindnu=5.0, upperindnu=5.0)
 
-    plt.figure(figsize=(12,8))
-    ax = plt.subplot(111)
-    ax.set_title(starid, fontsize=15)
-    ax.plot(frequency2,psd2,linewidth='1.0',color='lightgray')
-    ax.plot(frequency2,psd_smooth2,linewidth='1.5',color='red')
-    ax.set_xlabel('Frequency $(μHz)$', fontsize=15)
-    ax.set_ylabel('S/N', fontsize=15)
-    ax.axis([np.min(frequency2),np.max(frequency2),np.min(psd2),1.5*np.max(psd_smooth2)])
-    plt.savefig(dirname+starid+'power2.png')
-    plt.close()
+    if starid is not None and dirname is not None:
+        plt.figure(figsize=(12,8))
+        ax = plt.subplot(111)
+        ax.set_title(starid, fontsize=15)
+        ax.plot(frequency2,psd2,linewidth='1.0',color='lightgray')
+        ax.plot(frequency2,psd_smooth2,linewidth='1.5',color='red')
+        ax.set_xlabel('Frequency $(μHz)$', fontsize=15)
+        ax.set_ylabel('S/N', fontsize=15)
+        ax.axis([np.min(frequency2),np.max(frequency2),np.min(psd2),1.5*np.max(psd_smooth2)])
+        plt.savefig(dirname+starid+'power2.png')
+        plt.close()
 
     dnu_result = get_dnu_ACF(frequency2, psd2, 
         mumax, starid=starid, dirname=dirname)
     
     lower_limit, upper_limit = get_dnu_error(frequency, psd, 
         nyquist, parameters, mumax, gran_num=gran_num)
+    
+    if starid is not None and dirname is not None:
+        f = open(dirname + starid + '_dnuACF.csv', 'w')
+        f.write('# dnu_result, lower_limit, upper_limit'+'\n')
+        f.write('%.6f' % dnu_result + '\n')
+        f.write('%.6f' % lower_limit + '\n')
+        f.write('%.6f' % upper_limit + '\n')
+        f.close()
 
-    f = open(dirname + starid + '_dnuACF.csv', 'w')
-    f.write('# dnu_result, lower_limit, upper_limit'+'\n')
-    f.write('%.6f' % dnu_result + '\n')
-    f.write('%.6f' % lower_limit + '\n')
-    f.write('%.6f' % upper_limit + '\n')
-    f.close()
-
-    if echelle_plot == 1:
-        plot_echelle(freq=frequency2, power=psd2, dnu=dnu_result, 
-            echelletype=echelletype, starid=starid, dirname=dirname)
+        if echelle_plot == 1:
+            plot_echelle(freq=frequency2, power=psd2, dnu=dnu_result, 
+                echelletype=echelletype, starid=starid, dirname=dirname)
 
     return dnu_result, lower_limit, upper_limit
 
