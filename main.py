@@ -9,8 +9,8 @@ from astropy.timeseries import LombScargle
 from astropy.io import fits
 import emcee
 import corner
-import sys
 import os
+
 
 def smooth_wrapper(x, y, window_width, window_type = "bartlett", samplinginterval = None):
 
@@ -37,7 +37,7 @@ def smooth_wrapper(x, y, window_width, window_type = "bartlett", samplinginterva
         samplinginterval = np.median(x[1:-1] - x[0:-2])
 
     if not window_type in ["flat", "hanning", "hamming", "bartlett", "blackman"]:
-        raise ValueError("Window is on of 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'")
+        raise ValueError("Window type unavailable. Choose from flat, hanning, hamming, bartlett, blackman.")
 
     xp = np.arange(np.min(x), np.max(x), samplinginterval)
     yp = np.interp(xp, x, y)
@@ -89,56 +89,54 @@ def read_fits(filename):
 def lightcurve_prep(time, flux, flag, highpass_window=2.0, outlier_corr=5.0):
 
     '''
-    lightcurve preparation, for a single file
-    use the method described by Garcia et al. (2011), correcting outliers, jumps and drifts,
-    and then pass the lightcurve through a high-pass ﬁlter.
+    Prepare a light curve by removing bad points, correcting outliers, and
+    applying a high-pass filter (Garcia et al. 2011 method).
 
-    Input:
-        time: np.array (day)
+    Parameters
+    ----------
+    time : np.ndarray
+        Time array in days.
+    flux : np.ndarray
+        Raw light curve flux values.
+    flag : np.ndarray
+        Quality flag array (0 = good).
+    highpass_window : float, optional
+        High-pass filter width in days. Default is 2.0.
+    outlier_corr : float, optional
+        Sigma threshold for outlier rejection. Default is 5.0.
 
-        flux: np.array
-            the original lightcurve.
-        
-        flag: np.array
-            quality flag.
-
-        highpass_window: float
-            the width of high-pass filter (day).
-
-        outlier_corr: float
-            the threshold value of differ correct. (*sigma)
-        
-    Output:
-        time_day: np.array (day)
-        time_sec: np.array (second)
-        flux_new: np.array 
+    Returns
+    -------
+    time_day : np.ndarray
+        Time array (days) after cleaning.
+    time_sec : np.ndarray
+        Time array (seconds) after cleaning.
+    flux_new : np.ndarray
+        Corrected and high-pass filtered flux.
     '''
 
-    time, flux = time[flag==0], flux[flag==0]
+    time, flux = time[flag == 0], flux[flag == 0]
 
-    index = np.isnan(time) == False
-    time, flux = time[index], flux[index]
-    index = np.isnan(flux) == False
-    time, flux = time[index], flux[index]
-    index = np.isinf(flux) == False
-    time, flux = time[index], flux[index]
+    mask = np.isfinite(time) & np.isfinite(flux)
+    time, flux = time[mask], flux[mask]
 
-    average, sigma = np.mean(flux), np.std(flux)
-    time = time[np.abs(flux - average) <= outlier_corr*sigma]
-    flux = flux[np.abs(flux - average) <= outlier_corr*sigma]
+    mean_flux, sigma_flux = np.mean(flux), np.std(flux)
+    mask = np.abs(flux - mean_flux) <= outlier_corr * sigma_flux
+    time, flux = time[mask], flux[mask]
 
-    time_new = time * 24.0 * 3600.0
-    window = highpass_window * 24.0 * 3600.0
-    time_diff = time_new[1:] - time_new[:-1]
-    time_diff_med = np.nanmedian(time_diff)
-    kernelsize = int(window/time_diff_med)
-    if (kernelsize % 2) == 0:
-        kernelsize = kernelsize +1
-    flux_aftermedfilt = medfilt(flux, kernel_size=kernelsize)
-    index = np.argwhere(flux_aftermedfilt != 0.0)
-    time_day, time_sec = time[index], time_new[index]
-    flux, flux_aftermedfilt = flux[index], flux_aftermedfilt[index]
-    flux_new = flux / flux_aftermedfilt
+    time_sec = time * 24.0 * 3600.0
+    window_sec = highpass_window * 24.0 * 3600.0
+
+    dt = np.diff(time_sec)
+    dt_med = np.nanmedian(dt)
+    kernelsize = max(3, int(window_sec / dt_med))
+    if kernelsize % 2 == 0:
+        kernelsize = kernelsize + 1
+    flux_medfilt = medfilt(flux, kernel_size=kernelsize)
+
+    mask = flux_medfilt != 0.0
+    time_day, time_sec = time[mask], time_sec[mask]
+    flux_new = flux[mask] / flux_medfilt[mask]
 
     return time_day, time_sec, flux_new
 
@@ -163,11 +161,12 @@ def lightcurve(data_dir, cut_freq=2.0*11.57, outlier_corr=5.0, plot_flag=0, star
     
     Output:
         all_time_sec: np.array (second)
+            the time after correction.
         all_flux: np.array
             the relative flux after correction. 
     '''
 
-    highpass_window = (1/cut_freq)*11.57
+    highpass_window = (1 / cut_freq) * 11.57
     
     all_time_day, all_time_sec, all_flux = [], [], []
 
@@ -327,47 +326,27 @@ def bg_estimate(frequency, psd, percentile = 40, min_filter_window = 5):
     return crude_background
 
 
-# def auto_correlate(x, y, need_interpolate = False, samplinginterval = None): 
-
-#     '''
-#     Generate autocorrelation coefficient as a function of lag.
-
-#     Input:
-
-#         x: np.array, the independent variable of the time series.
-#         y: np.array, the dependent variable of the time series.
-#         need_interpolate: True or False. True is for unevenly spaced time series.
-#         samplinginterval: float. Default value: the median of intervals.
-
-#     Output:
-
-#         lagn: time lag.
-#         rhon: autocorrelation coeffecient.
-#     '''
-
-#     if len(x) != len(y): 
-#         raise ValueError("x and y must have equal size.")
-
-#     if need_interpolate is True:
-#         if samplinginterval is None:
-#             samplinginterval = np.median(x[1:-1] - x[0:-2])
-#         xp = np.arange(np.min(x), np.max(x), samplinginterval)
-#         yp = np.interp(xp, x, y)
-#         x = xp
-#         y = yp
-
-#     new_y = y - np.mean(y)
-#     aco = np.correlate(new_y, new_y, mode='same')
-
-#     N = len(aco)
-#     lagn = x[int(N/2):N] - x[int(N/2)]
-#     rhon = aco[int(N/2):N] / np.var(y)
-#     rhon = rhon / np.max(rhon)
-
-#     return lagn, rhon
-
-
 def auto_correlate(x, y, need_interpolate=False, samplinginterval=None):
+
+    '''
+    Generate autocorrelation coefficient as a function of lag. 
+
+    np.correlate perform slowly in large arrays. 
+
+    scipy.signal.correlate is faster and preferable (use FFT to compute the convolution).
+
+    Input:
+
+        x: np.array, the independent variable of the time series.
+        y: np.array, the dependent variable of the time series.
+        need_interpolate: True or False. True is for unevenly spaced time series.
+        samplinginterval: float. Default value: the median of intervals.
+
+    Output:
+
+        lagn: time lag.
+        rhon: autocorrelation coeffecient.
+    '''
 
     if len(x) != len(y): 
         raise ValueError("x and y must have equal size.")
@@ -391,7 +370,7 @@ def auto_correlate(x, y, need_interpolate=False, samplinginterval=None):
     return lagn, rhon
 
 
-def autocorrelate(frequency, power, numax, window_width = 250.0, frequency_spacing = None):
+def autocorrelate(frequency, power, numax, window_width=250.0, frequency_spacing=None):
 
     if frequency_spacing is None:
         frequency_spacing = np.median(np.diff(frequency))
@@ -428,7 +407,7 @@ def estimate_numax_acf2d(frequency, power, psd_smooth=None, plot_flag=1, log_plo
         metric[idx] = (np.sum(np.abs(acf)) - 1 ) / len(acf) # Store the max acf power normalised by the length
 
     if len(numaxs) > 10:
-        metric_smooth = simple_smooth(metric, window_len = 15, window = 'hanning')
+        metric_smooth = simple_smooth(metric, window_len=15, window='hanning')
     else:
         metric_smooth = metric
 
@@ -516,13 +495,13 @@ def estimate_numax_acf2d(frequency, power, psd_smooth=None, plot_flag=1, log_plo
 def psd_model(frequency, parameters, nyquist, gran_num=2, type='withgaussian'):
     
     '''
-    the model of power spectrum density.
+    The model of power spectrum density.
 
     Input:
 
         frequency: np.array (μHz)
 
-        parameters: np.array or list [w, a2, f2, a3, f3, h, mu, sig, c]
+        parameters: np.array or list [w, a2, f2, a3, f3, h, numax, sigma, c]
 
         nyquist: float
             nyquist frequency (μHz)
@@ -584,10 +563,10 @@ def lnlike(parameters, frequency, power, nyquist, gran_num=2, type="withgaussian
 def guess_background_parameters(frequency, psd, psd_smooth, numax_guess, starid=None, dirname=None):
     
     '''
-    part-I guess the parameters for the background model.
+    part-I - guess the power spectrum parameters.
     '''
 
-    # b1_solar = 24.298031575000003
+    # b1_solar = 24.298031575
     b2_solar = 735.4653975
     b3_solar = 2440.5672465 # sometimes tau = 1/b
     numax_solar = 3050
@@ -626,7 +605,7 @@ def guess_background_parameters(frequency, psd, psd_smooth, numax_guess, starid=
 def fitting_MLE(frequency, psd, initial_paras, nyquist, gran_num=2, starid=None, dirname=None):
     
     '''
-    part-II estimate the real background parameters by Maximum Likelihood Estimation
+    part-II - fit the power spectrum by Maximum Likelihood Estimation.
     '''
 
     nll = lambda *args: -lnlike(*args)
@@ -661,64 +640,42 @@ def fitting_MLE(frequency, psd, initial_paras, nyquist, gran_num=2, starid=None,
     return parameters_MLE
 
 
-def fitting_MCMC(frequency, psd, parameters_MLE, nyquist, bound=0.5, nsteps=3000, nwalkers=20, gran_num=2, starid=None, dirname=None):
+def fitting_MCMC(frequency, psd, parameters_MLE, nyquist, bound=0.5, nsteps=1000, nwalkers=20, gran_num=2, starid=None, dirname=None):
 
     '''
-    part-III estimate the real background parameters by MLE. (maximum likelihood estimation)
-
-    Recommend run this part after MLE fitting.
+    part-III - fit the power spectrum by MCMC. Recommend to run this part after MLE fitting.
     '''
 
     def lnprior(parameters):
 
         '''
-        define the prior distribution, it's uniform distribution determined by guessed parameters.
+        Compute the log-prior for the given parameters.
+
+        The prior is assumed to be uniform, bounded around the
+        maximum-likelihood estimates (parameters_MLE) within (1 ± bound) * 100%.
+
+        Returns 1.0 if parameters lie within bounds, -np.inf otherwise.
         '''
 
-        if gran_num==2:
+        if gran_num == 2:
+            param_indices = range(9)  # w, a2, b2, a3, b3, height, numax, sigma, c
+        elif gran_num == 1:
+            param_indices = range(7)  # w, a2, b2, height, numax, sigma, c
+        else:
+            return -np.inf
 
-            w, a2, b2, a3, b3, height, numax, sigma, c = parameters
+        for index, p in zip(param_indices, parameters):
+            min_val = parameters_MLE[index] * (1 - bound)
+            max_val = parameters_MLE[index] * (1 + bound)
+            if not (min_val < p < max_val):
+                return -np.inf
 
-            minw, maxw = parameters_MLE[0]*bound, parameters_MLE[0]*(1+bound)
-            mina2, maxa2 = parameters_MLE[1]*bound, parameters_MLE[1]*(1+bound)
-            minb2, maxb2 = parameters_MLE[2]*bound, parameters_MLE[2]*(1+bound)
-            mina3, maxa3 = parameters_MLE[3]*bound, parameters_MLE[3]*(1+bound)
-            minb3, maxb3 = parameters_MLE[4]*bound, parameters_MLE[4]*(1+bound)
-            minheight, maxheight = parameters_MLE[5]*bound, parameters_MLE[5]*(1+bound)
-            minnumax, maxnumax = parameters_MLE[6]*bound, parameters_MLE[6]*(1+bound)
-            minsigma, maxsigma = parameters_MLE[7]*bound, parameters_MLE[7]*(1+bound)
-            minc, maxc = parameters_MLE[8]*bound, parameters_MLE[8]*(1+bound)
+        return 1.0
 
-            if minw<w<maxw and mina2<a2<maxa2 and minb2<b2<maxb2 and mina3<a3<maxa3 and \
-            minb3<b3<maxb3 and minheight<height<maxheight and minnumax<numax<maxnumax and \
-            minsigma<sigma<maxsigma and minc<c<maxc:
-            
-                return 1.0
-        
-        elif gran_num==1:
-
-            w, a2, b2, height, numax, sigma, c = parameters
-
-            minw, maxw = parameters_MLE[0]*bound, parameters_MLE[0]*(1+bound)
-            mina2, maxa2 = parameters_MLE[1]*bound, parameters_MLE[1]*(1+bound)
-            minb2, maxb2 = parameters_MLE[2]*bound, parameters_MLE[2]*(1+bound)
-            minheight, maxheight = parameters_MLE[3]*bound, parameters_MLE[3]*(1+bound)
-            minnumax, maxnumax = parameters_MLE[4]*bound, parameters_MLE[4]*(1+bound)
-            minsigma, maxsigma = parameters_MLE[5]*bound, parameters_MLE[5]*(1+bound)
-            minc, maxc = parameters_MLE[6]*bound, parameters_MLE[6]*(1+bound)
-
-            if minw<w<maxw and mina2<a2<maxa2 and minb2<b2<maxb2 and \
-            minheight<height<maxheight and minnumax<numax<maxnumax and \
-            minsigma<sigma<maxsigma and minc<c<maxc:
-            
-                return 1.0
-        
-        return -np.inf
-
-    def lnprob(parameters,frquency,power,nyquist,gran_num,type):
+    def lnprob(parameters, frquency, power, nyquist, gran_num,type):
 
         '''
-            Define the full log-probability function by combining lnlike and lnprior from above.
+        Define the full log-probability function by combining lnlike and lnprior from above.
         '''
 
         lp = lnprior(parameters)
@@ -726,7 +683,7 @@ def fitting_MCMC(frequency, psd, parameters_MLE, nyquist, bound=0.5, nsteps=3000
         if not np.isfinite(lp):
             return -np.inf
         
-        return lp + lnlike(parameters,frquency,power,nyquist,gran_num,type)
+        return lp + lnlike(parameters, frquency, power, nyquist, gran_num, type)
     
     ndim = len(parameters_MLE)
     pos = parameters_MLE * (1 + 1e-3 * np.random.randn(nwalkers, ndim))
@@ -741,10 +698,11 @@ def fitting_MCMC(frequency, psd, parameters_MLE, nyquist, bound=0.5, nsteps=3000
                    result_mcmc.reshape((ndim, 3)), delimiter=",",
                    fmt=("%10.4f","%10.4f","%10.4f"), header="parameter_value, upper_errorbar, lower_errorbar")
         if gran_num == 2:
-            para_label = ['w', 'a2', 'b2', 'a3', 'b3', 'h', 'numax', 'sigma', 'c']
+            para_label = [r'$w$', r'$a_2$', r'$b_2$', r'$a_3$', r'$b_3$', r'$h$', r'$\nu_{\mathrm{max}}$', r'$\sigma$', r'$c$']
         elif gran_num == 1:
-            para_label = ['w', 'a2', 'b2', 'h', 'numax', 'sigma', 'c']
-        fig = corner.corner(samples, labels=para_label, quantiles=(0.16, 0.5, 0.84), truths=result_mcmc[:, 0])
+            para_label = [r'$w$', r'$a_2$', r'$b_2$', r'$h$', r'$\nu_{\mathrm{max}}$', r'$\sigma$', r'$c$']
+        fig = corner.corner(samples, labels=para_label, quantiles=[0.16, 0.5, 0.84], truths=result_mcmc[:, 0], 
+                            show_titles=True, title_kwargs={'fontsize': 15}, label_kwargs={'fontsize': 18})
         fig.savefig(os.path.join(dirname, f'{starid}_corner.png'))
         plt.close()
 
@@ -835,29 +793,17 @@ def plot_without_fit(frequency, psd, psd_smooth=None, bg=None, starid=None, dirn
 def trim(frequency, numax, psd, psd_smooth=None, lowerindnu=3.0, upperindnu=3.0):
 
     '''
-    Input: all in μHz
-
-        frequency, psd, psd_smooth: np.array, the original power spectrum density. (Background divided)
-        lowerindnu, upperindnu: set the frequency range. (μmax-a*dnu, μmax+b*dnu)
-
-    Output:
-    
-        1. initial value - dnu.
-        2. the new psd / psd_smooth.
+    Trim the power spectrum around a region of interest (νmax ± n*Δν). 
     '''
 
-    dnu = (numax/3050)**0.77 * 135.1
-
-    index1 = np.where(frequency <= numax-lowerindnu*dnu)[0]
-    index2 = np.where(frequency >= numax+upperindnu*dnu)[0]
-    index = np.union1d(index1,index2)
-    frequency_new = np.delete(frequency,index)
-    psd_new = np.delete(psd,index)
+    dnu = (numax / 3050.0) ** 0.77 * 135.1
+    mask = (frequency >= numax - lowerindnu * dnu) & (frequency <= numax + upperindnu * dnu)
+    frequency_new, psd_new = frequency[mask], psd[mask]
 
     if psd_smooth is None:
         return frequency_new, psd_new
     else:
-        psd_smooth_new = np.delete(psd_smooth,index)
+        psd_smooth_new = psd_smooth[mask]
         return frequency_new, psd_new, psd_smooth_new
 
 
@@ -866,7 +812,7 @@ def get_dnu_ACF(frequency, psd, numax, plot_flag=1, starid=None, dirname=None):
     deltamu_guess = (numax/3050)**0.77 * 135.1
 
     lagn, rhon = auto_correlate(frequency, psd, need_interpolate=True, samplinginterval=None)
-    rhon_smoothed = simple_smooth(rhon, window_len=len(lagn)/300, window='hanning')
+    rhon_smoothed = simple_smooth(rhon, window_len=int(len(lagn)/250), window='hanning')
     idx1 = np.where((lagn > 0.8 * deltamu_guess) & (lagn < 1.2 * deltamu_guess))[0]
     lagn1, rhon1, rhon_smoothed1 = lagn[idx1], rhon[idx1], rhon_smoothed[idx1]
     idx2 = np.where(rhon_smoothed1 == np.max(rhon_smoothed1))
@@ -982,9 +928,9 @@ def echelle(freq, power, dnu, offset=0.0, echelletype='single'):
 
 def plot_echelle(freq, power, dnu, offset=0.0, echelletype='single', starid=None, dirname=None):
 
-    """
+    '''
     Plot the echelle diagram for a given amplitude (or power) spectrum.
-    """
+    '''
 
     echx, echy, echz = echelle(freq, power, dnu, offset=offset, echelletype = echelletype)
     echz = np.sqrt(echz)
@@ -1019,7 +965,7 @@ def psd_bg(frequency, psd, parameters, nyquist, gran_num=2):
     Calculate the background of power spectrum with identified parameters.
 
     Input:
-        parameters = ['w', 'a2', 'b2', 'a3', 'b3', 'h', 'numax', 'sig', 'c']
+        parameters = ['w', 'a2', 'b2', 'a3', 'b3', 'h', 'numax', 'sigma', 'c']
 
     Output:
         background of power spectrum
