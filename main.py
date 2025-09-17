@@ -11,60 +11,62 @@ import emcee
 import corner
 import os
 
-
-def smooth_wrapper(x, y, window_width, window_type = "bartlett", samplinginterval = None):
+def smooth_wrapper(x, y, window_width, window_type="bartlett", samplinginterval=None):
 
     '''
-    signal smooth
-    https://scipy.github.io/old-wiki/pages/Cookbook/SignalSmooth 
+    Smooth a signal using convolution with a chosen window.
+    https://scipy.github.io/old-wiki/pages/Cookbook/SignalSmooth
 
-    Input:
+    Parameters
+    ----------
+    x : np.ndarray
+        Input x-axis values (must be sorted).
+    y : np.ndarray
+        Signal values corresponding to `x`.
+    window_width : float
+        Width of the smoothing window in the same units as `x`.
+    window_type : {"flat", "hanning", "hamming", "bartlett", "blackman"}, optional
+        Type of smoothing window (default: "bartlett").
+        "flat" uses a moving average.
+    samplinginterval : float, optional
+        Resampling interval. If None, estimated from the median spacing in `x`.
 
-        x: the input signal 
-
-        window_width: the width of the smoothing window (μHz)
-
-        window_type: 
-            The type of window from 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'.
-            The flat window will produce a moving average smoothing.
-
-    Output:
-
-        the smoothed signal
+    Returns
+    -------
+    np.ndarray
+        Smoothed `y` values aligned with input `x`.
     '''
 
     if samplinginterval is None:
-        samplinginterval = np.median(x[1:-1] - x[0:-2])
+        samplinginterval = np.median(np.diff(x))
 
     if not window_type in ["flat", "hanning", "hamming", "bartlett", "blackman"]:
-        raise ValueError("Window type unavailable. Choose from flat, hanning, hamming, bartlett, blackman.")
+        raise ValueError("Unsupported window type. Choose from [flat, hanning, hamming, bartlett, blackman].")
 
     xp = np.arange(np.min(x), np.max(x), samplinginterval)
     yp = np.interp(xp, x, y)
-    window_len = int(window_width/samplinginterval)
 
+    window_len = max(3, int(window_width/samplinginterval))
     if window_len % 2 == 0:
         window_len = window_len + 1
-    
+
     if window_type == "flat":
-        w = np.ones(window_len,"d")
+        w = np.ones(window_len, dtype=float)
     else:
         w = eval("np." + window_type + "(window_len)") 
     
-    ys = np.convolve(w/w.sum(), yp, mode = "same")
-    yf = np.interp(x, xp, ys)
+    ys = np.convolve(w / w.sum(), yp, mode="same")
 
-    return yf
+    return np.interp(x, xp, ys)
 
 
-def simple_smooth(x, window_len, window):
+def simple_smooth(x, window_len, window_type):
 
-    s = x
-    if window == "flat":
-        w = np.ones(window_len,"d")
+    if window_type == "flat":
+        w = np.ones(window_len, dtype=float)
     else:
-        w = eval("np." + window + "(window_len)") 
-    y = np.convolve(w/w.sum(), s, mode = "same")
+        w = eval("np." + window_type + "(window_len)") 
+    y = np.convolve(w / w.sum(), x, mode="same")
 
     return y
 
@@ -78,9 +80,7 @@ def read_fits(filename):
         quality_flag = data['QUALITY']
         flux_key = next((key for key in flux_keys if key in data.columns.names), None)
         if flux_key is None:
-            raise KeyError(
-                f"None of the expected flux columns {flux_keys} found in {filename}."
-            )
+            raise KeyError(f"None of the expected flux columns {flux_keys} found in {filename}.")
         flux = data[flux_key]
 
     return time, flux, quality_flag
@@ -407,7 +407,7 @@ def estimate_numax_acf2d(frequency, power, psd_smooth=None, plot_flag=1, log_plo
         metric[idx] = (np.sum(np.abs(acf)) - 1 ) / len(acf) # Store the max acf power normalised by the length
 
     if len(numaxs) > 10:
-        metric_smooth = simple_smooth(metric, window_len=15, window='hanning')
+        metric_smooth = simple_smooth(metric, window_len=15, window_type='hanning')
     else:
         metric_smooth = metric
 
@@ -495,47 +495,56 @@ def estimate_numax_acf2d(frequency, power, psd_smooth=None, plot_flag=1, log_plo
 def psd_model(frequency, parameters, nyquist, gran_num=2, type='withgaussian'):
     
     '''
-    The model of power spectrum density.
+    Compute the power spectral density model.
 
-    Input:
+    Parameters
+    ----------
+    frequency : np.ndarray
+        Frequency array in μHz.
+    parameters : array-like
+        Model parameters. Expected formats:
 
-        frequency: np.array (μHz)
+        If n_granulation=2:
+            [w, a2, b2, a3, b3, height, numax, sigma, c]
 
-        parameters: np.array or list [w, a2, f2, a3, f3, h, numax, sigma, c]
+        If n_granulation=1:
+            [w, a2, b2, height, numax, sigma, c]
 
-        nyquist: float
-            nyquist frequency (μHz)
+    nyquist : float
+        Nyquist frequency in μHz.
+    n_granulation : int, optional
+        Number of granulation components (1 or 2). Default is 2.
+    gaussian_mode : {"withgaussian", "withoutgaussian"}, optional
+        Whether to include the Gaussian envelope. Default is "withgaussian".
 
-        cadence_flag: str
-            'withgaussian' or 'withoutgaussian'.
-        
-    Output:
-
-        power: np.array
+    Returns
+    -------
+    np.ndarray
+        Power spectrum density values.
     '''
 
-    zeta = 2.0*2.0**0.5/np.pi
-    if gran_num==2:
+    zeta = 2.0 * np.sqrt(2.0) / np.pi  
+    part = (np.pi / 2.0) * frequency / nyquist
+    sinc2 = (np.sin(part) / part) ** 2.0
+
+    if gran_num == 2:
         w, a2, b2, a3, b3, height, numax, sigma, c = parameters
-        power2 = zeta*a2**2.0/(b2*(1+(frequency/b2)**c))
-        power3 = zeta*a3**2.0/(b3*(1+(frequency/b3)**c))
-        power4 = height * np.exp(-1.0*(numax-frequency)**2/(2.0*sigma**2.0))
-        part = (np.pi/2.0)*frequency/nyquist
-        power0 = (np.sin(part)/part)**2.0
+        gran2 = zeta * a2**2 / (b2 * (1 + (frequency / b2) ** c))
+        gran3 = zeta * a3**2 / (b3 * (1 + (frequency / b3) ** c))
+        gaussian = height * np.exp(-1.0 * (numax-frequency)**2 / (2.0*sigma**2.0))
         if type == "withgaussian":
-            power = power0*(power2 + power3 + power4) + w
+            power = sinc2 * (gran2 + gran3 + gaussian) + w
         elif type == "withoutgaussian":
-            power = power0*(power2 + power3) + w
-    elif gran_num==1:
+            power = sinc2 * (gran2 + gran3) + w
+    
+    elif gran_num == 1:
         w, a2, b2, height, numax, sigma, c = parameters
-        power2 = zeta*a2**2.0/(b2*(1+(frequency/b2)**c))
-        power4 = height * np.exp(-1.0*(numax-frequency)**2/(2.0*sigma**2.0))
-        part = (np.pi/2.0)*frequency/nyquist
-        power0 = (np.sin(part)/part)**2.0
+        gran2 = zeta * a2**2 / (b2 * (1 + (frequency / b2) ** c))
+        gaussian = height * np.exp(-1.0 * (numax-frequency)**2 / (2.0*sigma**2.0))
         if type == "withgaussian":
-            power = power0*(power2 + power4) + w
+            power = sinc2 * (gran2 + gaussian) + w
         elif type == "withoutgaussian":
-            power = power0*(power2) + w
+            power = sinc2 * gran2 + w
     
     return power
 
@@ -543,7 +552,7 @@ def psd_model(frequency, parameters, nyquist, gran_num=2, type='withgaussian'):
 def lnlike(parameters, frequency, power, nyquist, gran_num=2, type="withgaussian"):
 
     '''
-    This is the likelihood function for M(v). It will be used in fitting.
+    Likelihood function for the power spectral density model.
 
     Some notes:
 
@@ -555,7 +564,7 @@ def lnlike(parameters, frequency, power, nyquist, gran_num=2, type="withgaussian
 
     powerx = psd_model(frequency=frequency, parameters=parameters, 
         nyquist=nyquist, gran_num=gran_num, type=type)
-    like_function = (-1.0)*(np.sum(np.log(powerx)+(power/powerx)))
+    like_function = -1.0 * (np.sum(np.log(powerx) + (power/powerx)))
 
     return like_function
 
@@ -702,7 +711,7 @@ def fitting_MCMC(frequency, psd, parameters_MLE, nyquist, bound=0.5, nsteps=1000
         elif gran_num == 1:
             para_label = [r'$w$', r'$a_2$', r'$b_2$', r'$h$', r'$\nu_{\mathrm{max}}$', r'$\sigma$', r'$c$']
         fig = corner.corner(samples, labels=para_label, quantiles=[0.16, 0.5, 0.84], truths=result_mcmc[:, 0], 
-                            show_titles=True, title_kwargs={'fontsize': 15}, label_kwargs={'fontsize': 18})
+                            show_titles=True, title_kwargs={'fontsize': 15}, label_kwargs={'fontsize': 20})
         fig.savefig(os.path.join(dirname, f'{starid}_corner.png'))
         plt.close()
 
@@ -812,7 +821,7 @@ def get_dnu_ACF(frequency, psd, numax, plot_flag=1, starid=None, dirname=None):
     deltamu_guess = (numax/3050)**0.77 * 135.1
 
     lagn, rhon = auto_correlate(frequency, psd, need_interpolate=True, samplinginterval=None)
-    rhon_smoothed = simple_smooth(rhon, window_len=int(len(lagn)/250), window='hanning')
+    rhon_smoothed = simple_smooth(rhon, window_len=int(len(lagn)/250), window_type='hanning')
     idx1 = np.where((lagn > 0.8 * deltamu_guess) & (lagn < 1.2 * deltamu_guess))[0]
     lagn1, rhon1, rhon_smoothed1 = lagn[idx1], rhon[idx1], rhon_smoothed[idx1]
     idx2 = np.where(rhon_smoothed1 == np.max(rhon_smoothed1))
@@ -860,68 +869,66 @@ def get_dnu_error(frequency, psd, nyquist, parameters, numax, gran_num=2):
 def echelle(freq, power, dnu, offset=0.0, echelletype='single'):
 
     '''
-    Generate a z-map for echelle plotting
+    Generate an echelle diagram z-map for stellar oscillation analysis.
 
-    Input:
+    Parameters
+    ----------
+    freq : np.ndarray
+        Frequency array (same units as `dnu`).
+    power : np.ndarray
+        Power spectrum density values corresponding to `freq`.
+    dnu : float
+        Large frequency separation.
+    offset : float, optional
+        Horizontal frequency shift (default: 0.0).
+    echelletype : {"single", "double"}, optional
+        Whether to stack one or two orders side by side (default: "single").
 
-        frequency, psd: np.array, the power spectrum
-
-        dnu: float, the large seperation
-
-        offset: float, the horizontal shift in the same unit of frequency
-
-        echelletype: str, 'single' or 'double'
-
-    Output:
-
-        x, y: 1d array
-        z: 2d array
+    Returns
+    -------
+    xn : np.ndarray
+        X-axis values (frequency modulo `dnu`).
+    yn : np.ndarray
+        Y-axis values (frequency stacking across orders).
+    z : np.ndarray
+        2D array (z-map) of power values suitable for pcolormesh/imshow plotting.
     '''
 
-    fmin = np.min(freq)
-    fmax = np.max(freq)
-
-    fmin = fmin - offset
-    fmax = fmax - offset
     freq = freq - offset
+    fmin, fmax = np.min(freq), np.max(freq)
 
     if fmin <= 0.0:
         fmin = 0.0
     else:
         fmin = fmin - (fmin % dnu)
 
-    # trim data
-    index = (freq>=fmin) & (freq<=fmax)
-    # index = np.intersect1d(np.where(freq>=fmin)[0],np.where(freq<=fmax)[0])
-    trimx = freq[index]
+    mask = (freq >= fmin) & (freq <= fmax)
+    trimx, trimp = freq[mask], power[mask]
 
-    samplinginterval = np.median(trimx[1:-1] - trimx[0:-2]) * 0.1
-    xp = np.arange(fmin,fmax+dnu,samplinginterval)
-    yp = np.interp(xp, freq, power)
+    sampling_interval = np.median(np.diff(trimx)) * 0.1
+    xp = np.arange(fmin, fmax + dnu, sampling_interval)
+    yp = np.interp(xp, trimx, trimp)
 
-    n_stack = int((fmax-fmin)/dnu)
-    n_element = int(dnu/samplinginterval)
+    n_stack = int((fmax - fmin) / dnu)
+    n_element = int(np.round(dnu / sampling_interval))
 
     morerow = 2
-    arr = np.arange(1,n_stack) * dnu # + period/2.0
-    arr2 = np.array([arr,arr])
-    yn = np.reshape(arr2,len(arr)*2, order="F")
-    yn = np.insert(yn,0,0.0)
-    yn = np.append(yn,n_stack*dnu) + fmin + offset
+    order_edges = np.arange(0, n_stack + 1) * dnu + fmin + offset
+    yn = np.repeat(order_edges, 2)[1:-1]
 
     if echelletype == "single":
-        z = np.zeros([n_stack*morerow, n_element])
-        xn = np.arange(1, n_element+1) / n_element * dnu
+        z = np.zeros([n_stack * morerow, n_element])
+        xn = np.arange(1, n_element + 1) / n_element * dnu
         for i in range(n_stack):
-            for j in range(i*morerow,(i+1)*morerow):
-                z[j,:] = yp[n_element*(i):n_element*(i+1)]
+            for j in range(i*morerow, (i+1)*morerow):
+                z[j, :] = yp[n_element*(i): n_element*(i+1)]
 
     if echelletype == "double":
         z = np.zeros([n_stack*morerow, 2*n_element])
         xn = np.arange(1, 2*n_element+1) / n_element * dnu
         for i in range(n_stack):
-            for j in range(i*morerow,(i+1)*morerow):
-                z[j,:] = np.concatenate([yp[n_element*(i):n_element*(i+1)],yp[n_element*(i+1):n_element*(i+2)]])
+            for j in range(i*morerow, (i+1)*morerow):
+                z[j,:] = np.concatenate([yp[n_element*(i): n_element*(i+1)], yp[n_element*(i+1): n_element*(i+2)]])
 
     return xn, yn, z
 
@@ -932,28 +939,22 @@ def plot_echelle(freq, power, dnu, offset=0.0, echelletype='single', starid=None
     Plot the echelle diagram for a given amplitude (or power) spectrum.
     '''
 
-    echx, echy, echz = echelle(freq, power, dnu, offset=offset, echelletype = echelletype)
+    echx, echy, echz = echelle(freq, power, dnu, offset=offset, echelletype=echelletype)
     echz = np.sqrt(echz)
-    levels = np.linspace(np.min(echz),np.max(echz),300)
+    levels = np.linspace(np.min(echz), np.max(echz), 300)
 
-    if echelletype == "single":
-        plt.figure(figsize=(10, 10))
-        ax = plt.subplot(111)
-    elif echelletype == "double":
-        plt.figure(figsize=(10, 10))
-        ax = plt.subplot(111)
-        ax.axvline(dnu, c = 'r', linewidth = '2.0', alpha = 0.5)
+    plt.figure(figsize=(10, 10))
+    ax = plt.subplot(111)
+    if echelletype == "double":
+        ax.axvline(dnu, c='r', linewidth=2.0, alpha=0.5)
     # ax.set_title(starid, fontsize=20)
-    ax.contourf(echx, echy, echz, cmap = 'gray_r', levels = levels)
+    ax.contourf(echx, echy, echz, levels=levels, cmap='gray_r')
     ax.axis([np.min(echx), np.max(echx), np.min(echy), np.max(echy)])
     ax.set_xlabel(fr'Frequency mod {round(dnu, 2)} $\mathrm{{[μHz]}}$', fontsize=20)
     ax.set_ylabel(r'Frequency $\mathrm{[μHz]}$', fontsize=20)
     ax.tick_params(axis='both', which='major', labelsize=20)
     plt.tight_layout()
-    if echelletype == "single":
-        plt.savefig(os.path.join(dirname, f'{starid}_echelle_single.png'))
-    elif echelletype == "double":
-        plt.savefig(os.path.join(dirname, f'{starid}_echelle_double.png'))
+    plt.savefig(os.path.join(dirname, f'{starid}_echelle_{echelletype}.png'))
     plt.close()
 
     return
@@ -1030,160 +1031,3 @@ def dnu(frequency, psd, numax, parameters, nyquist, gran_num=2, echelle_plot=1, 
                 echelletype=echelletype, starid=starid, dirname=dirname)
 
     return dnu_result, lower_limit, upper_limit
-
-
-# def dnu_bayesian(frequency, power, dnu_guess, nsteps = 5000, starid = None, dirname = None):
-
-#     '''
-#     Calculate the large seperation with bayesian methods.
-
-#     Input:
-
-#         frequency, psd: np.array, the power spectrum after trim
-
-#         dnu_guess: float, the initial value of large seperation
-
-#     Output:
-
-#         fitting result.
-#     '''
-
-#     # dnu, A0, A1, A2, FWHM0, FWHM1, FWHM2, center0, center1, center2, c
-#     pos_initial = np.array([dnu_guess, 0.4, 0.4, 0.4, 0.2*dnu_guess, 0.4*dnu_guess, 
-#         0.2*dnu_guess, 0.3*dnu_guess, 0.7*dnu_guess, 0.2*dnu_guess, 0.1])
-
-#     def lnlike_dnu(parameters, frequency, power):
-
-#         dnu, A0, A1, A2, FWHM0, FWHM1, FWHM2, center0, center1, center2, c = parameters
-
-#         echx, echy, echz = echelle(frequency, power, dnu, offset = dnu/4, echelletype = 'single')
-#         echz_sum = np.sum(echz, axis = 0)
-#         echz_sum = echz_sum / np.max(echz_sum)
-#         echz_sum = smooth_wrapper(echx, echz_sum, window_width = 0.3)
-
-#         part0 = A0 / (1.0 + ((echx-center0)**2 / (FWHM0**2/4)))
-#         part1 = A1 / (1.0 + ((echx-center1)**2 / (FWHM1**2/4)))
-#         part2 = A2 / (1.0 + ((echx-center2)**2 / (FWHM2**2/4)))
-#         model = part0 + part1 + part2 + c
-
-#         like_function = (-1.0)*(np.sum(np.log(model)+(echz_sum/model)))
-
-#         return like_function
-
-#     # bnds = ((0.3*dnu_guess, 2.0*dnu_guess),(0.1, 1.0),(0.005, 0.3),(0.01, 0.5),
-#     #     (0.01*dnu_guess, 0.2*dnu_guess),(0.01*dnu_guess, 0.5*dnu_guess),
-#     #     (0.01*dnu_guess, 0.2*dnu_guess),(0.3*dnu_guess, 0.8*dnu_guess),
-#     #     (0.5*dnu_guess, 1.0*dnu_guess),(0.01*dnu_guess, 0.5*dnu_guess),
-#     #     (0.001, 0.1))
-#     # nll = lambda *args: -lnlike_dnu(*args) 
-#     # result = op.minimize(nll, pos_initial, args=(frequency, power), bounds=bnds)
-#     # parameters_MLE_dnu = result["x"].reshape((11))
-
-#     def lnprior_dnu(parameters):
-
-#         dnu, A0, A1, A2, FWHM0, FWHM1, FWHM2, center0, center1, center2, c = parameters
-
-#         mindnu, maxdnu = 0.7*dnu_guess, 1.3*dnu_guess
-#         minA0, maxA0 = 0.1, 0.8
-#         minA1, maxA1 = 0.1, 0.8
-#         minA2, maxA2 = 0.1, 0.8
-#         minFWHM0, maxFWHM0 = 0.035*dnu_guess, 0.45*dnu_guess
-#         minFWHM1, maxFWHM1 = 0.035*dnu_guess, 0.9*dnu_guess
-#         minFWHM2, maxFWHM2 = 0.035*dnu_guess, 0.45*dnu_guess
-#         mincenter0, maxcenter0 = 0.1*dnu_guess, 0.5*dnu_guess
-#         mincenter1, maxcenter1 = 0.5*dnu_guess, 1.0*dnu_guess
-#         mincenter2, maxcenter2 = 0.1*dnu_guess, 0.5*dnu_guess
-#         minc, maxc = 0.001, 0.2
-
-#         if mindnu<dnu<maxdnu and minA0<A0<maxA0 and minA1<A1<maxA1 and minA2<A2<maxA2 and \
-#         minFWHM0<FWHM0<maxFWHM0 and minFWHM1<FWHM1<maxFWHM1 and minFWHM2<FWHM2<maxFWHM2 and \
-#         mincenter0<center0<maxcenter0 and mincenter1<center1<maxcenter1 and \
-#         mincenter2<center2<maxcenter2 and minc<c<maxc:
-        
-#             return 1.0
-        
-#         return -np.inf
-
-#     def Inprob_dnu(parameters, frequency, power):
-
-#         lp = lnprior_dnu(parameters)
-#         if not np.isfinite(lp):
-#             return -np.inf
-        
-#         return lp + lnlike_dnu(parameters, frequency, power)
-
-#     ndim, nwalkers, stepsize = 11, 30, 0.001
-#     pos = [pos_initial + stepsize*np.random.randn(ndim) for i in range(nwalkers)]
-#     sampler = emcee.EnsembleSampler(nwalkers, ndim, Inprob_dnu, args = (frequency, power))
-#     nsteps = 5000 if nsteps == None else nsteps
-#     bar_width = 30
-#     for j, result in enumerate(sampler.sample(pos, iterations = nsteps)):
-#         n = int((bar_width+1) * float(j) / nsteps)
-#         sys.stdout.write("\r[{0}{1}]".format('#' * n, ' ' * (bar_width - n)))
-#     sys.stdout.write("\n")
-#     samples = sampler.chain[:, 1000:, :].reshape((-1, ndim))
-#     result_mcmc = np.array(list(map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
-#         zip(*np.percentile(samples, [16, 50, 84], axis=0)))))
-
-#     np.savetxt(dirname+starid+"parametersMCMC_dnu.csv", result_mcmc.reshape((11,3)), delimiter=",", 
-#         fmt=("%10.4f","%10.4f","%10.4f"), header="parameter_value, upper_error, lower_error")
-
-#     para_label = ['dnu', 'A0', 'A1', 'A2', 'FWHM0', 'FWHM1', 'FWHM2', 'center0', 'center1', 'center2','c']
-#     fig = corner.corner(samples, labels = para_label, quantiles = (0.16, 0.5, 0.84), truths = result_mcmc[:,0])
-#     fig.savefig(dirname+starid+'emcee_corner_dnu.png')
-#     plt.close()
-
-#     return result_mcmc[:,0]
-
-
-# def dnu_sum_model(parameters, echx):
-
-#     '''
-#     echz_sum fitting model
-#     '''
-
-#     dnu, A0, A1, A2, FWHM0, FWHM1, FWHM2, center0, center1, center2, c = parameters
-
-#     part0 = A0 / (1.0 + ((echx-center0)**2 / (FWHM0**2/4)))
-#     part1 = A1 / (1.0 + ((echx-center1)**2 / (FWHM1**2/4)))
-#     part2 = A2 / (1.0 + ((echx-center2)**2 / (FWHM2**2/4)))
-#     model = part0 + part1 + part2 + c
-
-#     return model
-
-
-# def dnu_sum_plot(freduency, power, parameters, offset=0.0, starid = None, dirname = None):
-
-#     '''
-#     Plot echx - echz_sum
-
-#     dnu, A0, A1, A2, FWHM0, FWHM1, FWHM2, center0, center1, center2, c = parameters
-#     '''
-
-#     echx, echy, echz = echelle(freduency, power, parameters[0], offset = offset, echelletype = 'single')
-#     echz_sum = np.sum(echz, axis = 0)
-#     echz_sum = echz_sum / np.max(echz_sum)
-#     model = dnu_sum_model(parameters, echx)
-
-#     plt.figure(figsize=(8,8))
-#     grid = plt.GridSpec(3, 1, wspace=0.0, hspace=0.0)
-
-#     ax1 = plt.subplot(grid[0:2,0:1])
-#     levels = np.linspace(np.min(np.sqrt(echz)), np.max(np.sqrt(echz)), 300)
-#     ax1.set_title(starid+' Echelle', fontsize=20)
-#     ax1.contourf(echx, echy, np.sqrt(echz), cmap = 'gray_r', levels = levels)
-#     ax1.axis([np.min(echx),np.max(echx),np.min(echy),np.max(echy)])
-#     ax1.set_ylabel(r'Frequency (μHz)', fontsize=20)
-
-#     ax2 = plt.subplot(grid[2:3,0:1], sharex=ax1)
-#     ax2.plot(echx, echz_sum, color='gray', linewidth=1.2, label='Echelle sum')
-#     ax2.plot(echx, model, color='red', linewidth=1.5, label='Fitting')
-#     ax2.axis([np.min(echx),np.max(echx),0.0,1.1])
-#     ax2.legend()
-#     ax2.set_xlabel(r'Frequency' +' mod ' + str(round(parameters[0],2)) + ' (μHz)', fontsize=20)
-#     ax2.set_ylabel(r'Power (a.u.)', fontsize=20)
-
-#     plt.savefig(dirname+starid+'dnuMCMC.png', dpi=300)
-#     plt.close()
-
-#     return
